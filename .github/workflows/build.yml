@@ -23,7 +23,7 @@ jobs:
         run: |
           git submodule update --init --recursive
 
-      - name: List project
+      - name: List project schemes
         run: |
           xcodebuild \
             -list \
@@ -38,7 +38,7 @@ jobs:
 
       - name: Archive unsigned app
         run: |
-          set -e
+          set -o pipefail
 
           xcodebuild archive \
             -project "darksword-kexploit-fun.xcodeproj" \
@@ -49,9 +49,25 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
-            DEVELOPMENT_TEAM=""
+            DEVELOPMENT_TEAM="" \
+            2>&1 | tee "$RUNNER_TEMP/xcodebuild.log"
 
-      - name: Locate kfun.app
+      - name: Show build errors
+        if: failure()
+        run: |
+          echo "========== XCODE ERRORS =========="
+
+          grep -n -E \
+            '(^|[[:space:]])error:|Command .* failed|ARCHIVE FAILED|BUILD FAILED|PhaseScriptExecution' \
+            "$RUNNER_TEMP/xcodebuild.log" \
+            || true
+
+          echo
+          echo "========== LAST 300 LINES =========="
+
+          tail -n 300 "$RUNNER_TEMP/xcodebuild.log"
+
+      - name: Locate application
         run: |
           set -e
 
@@ -77,24 +93,29 @@ jobs:
           mkdir -p "$RUNNER_TEMP/Payload"
           cp -R "$APP" "$RUNNER_TEMP/Payload/kfun.app"
 
-      - name: Remove accidental signatures
+      - name: Remove signatures and provisioning
         run: |
           set +e
 
           APP="$RUNNER_TEMP/Payload/kfun.app"
 
-          echo "Existing code signatures:"
+          echo "Checking existing signature:"
           codesign -dvvv "$APP" 2>&1 || true
 
-          # Remove any signatures that may have been created
-          # by custom build scripts.
-          find "$APP" -type d -name "_CodeSignature" \
+          echo "Removing code signatures..."
+          find "$APP" \
+            -type d \
+            -name "_CodeSignature" \
+            -prune \
             -exec rm -rf {} + 2>/dev/null || true
 
-          find "$APP" -type f -name "embedded.mobileprovision" \
+          echo "Removing provisioning profiles..."
+          find "$APP" \
+            -type f \
+            -name "embedded.mobileprovision" \
             -delete 2>/dev/null || true
 
-      - name: Create unsigned IPA
+      - name: Create IPA
         run: |
           set -e
 
@@ -106,22 +127,37 @@ jobs:
             Excalibur-unsigned.ipa \
             Payload
 
-          echo "Created IPA:"
+          echo "IPA created:"
           ls -lh Excalibur-unsigned.ipa
 
       - name: Verify IPA
         run: |
           set -e
 
-          echo "IPA contents:"
+          echo "========== IPA CONTENTS =========="
+
           unzip -l "$RUNNER_TEMP/Excalibur-unsigned.ipa"
 
           echo
-          echo "Checking application:"
-          unzip -q "$RUNNER_TEMP/Excalibur-unsigned.ipa" \
+          echo "========== EXTRACTING IPA =========="
+
+          rm -rf "$RUNNER_TEMP/ipa-check"
+
+          unzip -q \
+            "$RUNNER_TEMP/Excalibur-unsigned.ipa" \
             -d "$RUNNER_TEMP/ipa-check"
 
+          echo
+          echo "========== PAYLOAD =========="
+
           ls -la "$RUNNER_TEMP/ipa-check/Payload"
+
+          echo
+          echo "========== APP =========="
+
+          find "$RUNNER_TEMP/ipa-check/Payload/kfun.app" \
+            -maxdepth 2 \
+            -print
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
