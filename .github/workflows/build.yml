@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    name: Build unsigned IPA
+    name: Build Excalibur
     runs-on: macos-26
 
     steps:
@@ -19,17 +19,15 @@ jobs:
           xcodebuild -version
           xcode-select -p
 
-      - name: List project schemes
+      - name: Initialize submodules
+        run: |
+          git submodule update --init --recursive
+
+      - name: List project
         run: |
           xcodebuild \
             -list \
             -project "darksword-kexploit-fun.xcodeproj"
-
-      - name: Build XPF Library
-        run: |
-          cd darksword-kexploit-fun/XPF
-          make ios
-          ls -la output/ios/
 
       - name: Clean
         run: |
@@ -40,6 +38,8 @@ jobs:
 
       - name: Archive unsigned app
         run: |
+          set -e
+
           xcodebuild archive \
             -project "darksword-kexploit-fun.xcodeproj" \
             -scheme "darksword-kexploit-fun" \
@@ -48,48 +48,82 @@ jobs:
             -archivePath "$RUNNER_TEMP/Excalibur.xcarchive" \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM=""
 
-      - name: Find application
+      - name: Locate kfun.app
         run: |
           set -e
 
           ARCHIVE="$RUNNER_TEMP/Excalibur.xcarchive"
+
+          echo "Archive contents:"
+          find "$ARCHIVE" -maxdepth 5 -print
+
           APP=$(find "$ARCHIVE/Products/Applications" \
             -maxdepth 1 \
-            -name "*.app" \
+            -name "kfun.app" \
             -type d \
             -print -quit)
 
           if [ -z "$APP" ]; then
-            echo "ERROR: No .app was found!"
-            find "$ARCHIVE" -maxdepth 5 -print
+            echo "::error::kfun.app was not found!"
             exit 1
           fi
 
-          echo "Found:"
+          echo "Found app:"
           echo "$APP"
 
           mkdir -p "$RUNNER_TEMP/Payload"
-          cp -R "$APP" "$RUNNER_TEMP/Payload/"
+          cp -R "$APP" "$RUNNER_TEMP/Payload/kfun.app"
 
-      - name: Create IPA
+      - name: Remove accidental signatures
+        run: |
+          set +e
+
+          APP="$RUNNER_TEMP/Payload/kfun.app"
+
+          echo "Existing code signatures:"
+          codesign -dvvv "$APP" 2>&1 || true
+
+          # Remove any signatures that may have been created
+          # by custom build scripts.
+          find "$APP" -type d -name "_CodeSignature" \
+            -exec rm -rf {} + 2>/dev/null || true
+
+          find "$APP" -type f -name "embedded.mobileprovision" \
+            -delete 2>/dev/null || true
+
+      - name: Create unsigned IPA
         run: |
           set -e
 
           cd "$RUNNER_TEMP"
+
           rm -f Excalibur-unsigned.ipa
 
-          zip -qry Excalibur-unsigned.ipa Payload
+          zip -qry \
+            Excalibur-unsigned.ipa \
+            Payload
 
-          echo "IPA created:"
+          echo "Created IPA:"
           ls -lh Excalibur-unsigned.ipa
 
       - name: Verify IPA
         run: |
+          set -e
+
+          echo "IPA contents:"
           unzip -l "$RUNNER_TEMP/Excalibur-unsigned.ipa"
 
-      - name: Upload IPA
+          echo
+          echo "Checking application:"
+          unzip -q "$RUNNER_TEMP/Excalibur-unsigned.ipa" \
+            -d "$RUNNER_TEMP/ipa-check"
+
+          ls -la "$RUNNER_TEMP/ipa-check/Payload"
+
+      - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
           name: Excalibur-unsigned-IPA
