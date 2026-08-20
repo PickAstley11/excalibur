@@ -1,4 +1,4 @@
-name: Build bad_query Unsigned IPA
+name: Build darksword-kexploit-fun Unsigned IPA
 
 on:
   workflow_dispatch:
@@ -21,16 +21,16 @@ jobs:
         run: |
           xcodebuild \
             -list \
-            -project "$PWD/bad_query.xcodeproj"
+            -project "$PWD/darksword-kexploit-fun.xcodeproj"
 
       - name: Build unsigned archive
         run: |
           xcodebuild archive \
-            -project "$PWD/bad_query.xcodeproj" \
-            -scheme "bad_query" \
+            -project "$PWD/darksword-kexploit-fun.xcodeproj" \
+            -scheme "darksword-kexploit-fun" \
             -configuration Release \
             -sdk iphoneos \
-            -archivePath "$PWD/build/bad_query.xcarchive" \
+            -archivePath "$PWD/build/darksword-kexploit-fun.xcarchive" \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO
@@ -40,14 +40,14 @@ jobs:
           mkdir -p build/Payload
 
           cp -R \
-            build/bad_query.xcarchive/Products/Applications/*.app \
+            build/darksword-kexploit-fun.xcarchive/Products/Applications/*.app \
             build/Payload/
 
           cd build
-          zip -r bad_query-unsigned.ipa Payload
+          zip -r darksword-kexploit-fun-unsigned.ipa Payload
 
-      - name: Upload IPA
+      - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: bad_query-unsigned-IPA
-          path: build/bad_query-unsigned.ipa
+          name: darksword-kexploit-fun-unsigned-IPA
+          path: build/darksword-kexploit-fun-unsigned.ipa
