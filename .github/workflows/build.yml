@@ -9,63 +9,130 @@ jobs:
     runs-on: macos-26
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      - name: Show Xcode version
-        run: |
-          xcodebuild -version
-          xcode-select -p
 
       - name: Initialize submodules
         run: |
           git submodule update --init --recursive
 
-      - name: List project schemes
+      - name: Show Xcode information
+        run: |
+          xcode-select -p
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+
+      - name: Install build dependencies
+        run: |
+          brew update
+          brew install ldid
+
+          echo "ldid:"
+          which ldid
+          ldid -V || true
+
+      - name: Verify repository
+        run: |
+          echo "Repository:"
+          pwd
+
+          echo
+          echo "Top level:"
+          ls -la
+
+          echo
+          echo "XPF:"
+          ls -la darksword-kexploit-fun/XPF
+
+          echo
+          echo "XPF Makefile:"
+          cat darksword-kexploit-fun/XPF/Makefile
+
+      - name: Show Xcode schemes
         run: |
           xcodebuild \
             -list \
             -project "darksword-kexploit-fun.xcodeproj"
 
-      - name: Clean
+      - name: Build XPF
+        run: |
+          set -e
+
+          cd darksword-kexploit-fun/XPF
+
+          make clean
+          make all
+
+          echo
+          echo "XPF iOS output:"
+          ls -lah output/ios/
+
+          test -f output/ios/libxpf.dylib
+
+      - name: Clean Xcode build
         run: |
           xcodebuild clean \
             -project "darksword-kexploit-fun.xcodeproj" \
             -scheme "darksword-kexploit-fun" \
-            -configuration Release
+            -configuration Release \
+            CODE_SIGNING_ALLOWED=NO
 
       - name: Archive unsigned app
+        id: archive
         run: |
           set -o pipefail
+
+          rm -rf "$RUNNER_TEMP/Excalibur.xcarchive"
+          rm -rf "$RUNNER_TEMP/Excalibur.xcresult"
+          rm -f "$RUNNER_TEMP/xcodebuild.log"
 
           xcodebuild archive \
             -project "darksword-kexploit-fun.xcodeproj" \
             -scheme "darksword-kexploit-fun" \
             -configuration Release \
             -sdk iphoneos \
+            -destination "generic/platform=iOS" \
             -archivePath "$RUNNER_TEMP/Excalibur.xcarchive" \
+            -resultBundlePath "$RUNNER_TEMP/Excalibur.xcresult" \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             DEVELOPMENT_TEAM="" \
             2>&1 | tee "$RUNNER_TEMP/xcodebuild.log"
 
-      - name: Show build errors
-        if: failure()
+      - name: Diagnose archive failure
+        if: failure() && steps.archive.outcome == 'failure'
         run: |
-          echo "========== XCODE ERRORS =========="
+          echo "========================================"
+          echo "XCODE BUILD ERRORS"
+          echo "========================================"
 
           grep -n -E \
-            '(^|[[:space:]])error:|Command .* failed|ARCHIVE FAILED|BUILD FAILED|PhaseScriptExecution' \
+            'error:|fatal error:|Command .* failed|ARCHIVE FAILED|BUILD FAILED|PhaseScriptExecution|CodeSign|Ld ' \
             "$RUNNER_TEMP/xcodebuild.log" \
             || true
 
           echo
-          echo "========== LAST 300 LINES =========="
+          echo "========================================"
+          echo "LAST 500 LINES"
+          echo "========================================"
 
-          tail -n 300 "$RUNNER_TEMP/xcodebuild.log"
+          tail -n 500 "$RUNNER_TEMP/xcodebuild.log" || true
+
+          echo
+          echo "========================================"
+          echo "ARCHIVE DIRECTORY"
+          echo "========================================"
+
+          if [ -d "$RUNNER_TEMP/Excalibur.xcarchive" ]; then
+            find "$RUNNER_TEMP/Excalibur.xcarchive" \
+              -maxdepth 5 \
+              -print
+          else
+            echo "No archive was created."
+          fi
 
       - name: Locate application
         run: |
@@ -73,49 +140,86 @@ jobs:
 
           ARCHIVE="$RUNNER_TEMP/Excalibur.xcarchive"
 
-          echo "Archive contents:"
-          find "$ARCHIVE" -maxdepth 5 -print
-
-          APP=$(find "$ARCHIVE/Products/Applications" \
-            -maxdepth 1 \
-            -name "kfun.app" \
-            -type d \
-            -print -quit)
-
-          if [ -z "$APP" ]; then
-            echo "::error::kfun.app was not found!"
+          if [ ! -d "$ARCHIVE" ]; then
+            echo "::error::Archive does not exist."
             exit 1
           fi
 
-          echo "Found app:"
+          echo "Searching for application..."
+
+          APP=$(find "$ARCHIVE/Products/Applications" \
+            -maxdepth 1 \
+            -type d \
+            -name "*.app" \
+            -print -quit)
+
+          if [ -z "$APP" ]; then
+            echo "::error::No .app found in archive."
+
+            find "$ARCHIVE" \
+              -maxdepth 6 \
+              -print
+
+            exit 1
+          fi
+
+          echo "Found:"
           echo "$APP"
 
+          APP_NAME=$(basename "$APP")
+
+          echo "Application name: $APP_NAME"
+
           mkdir -p "$RUNNER_TEMP/Payload"
-          cp -R "$APP" "$RUNNER_TEMP/Payload/kfun.app"
 
-      - name: Remove signatures and provisioning
+          cp -R \
+            "$APP" \
+            "$RUNNER_TEMP/Payload/$APP_NAME"
+
+      - name: Remove signing information
         run: |
-          set +e
+          set -e
 
-          APP="$RUNNER_TEMP/Payload/kfun.app"
+          APP=$(find "$RUNNER_TEMP/Payload" \
+            -maxdepth 1 \
+            -type d \
+            -name "*.app" \
+            -print -quit)
 
-          echo "Checking existing signature:"
+          if [ -z "$APP" ]; then
+            echo "::error::Could not find app in Payload."
+            exit 1
+          fi
+
+          echo "App:"
+          echo "$APP"
+
+          echo
+          echo "Existing signature:"
           codesign -dvvv "$APP" 2>&1 || true
 
-          echo "Removing code signatures..."
+          echo
+          echo "Removing _CodeSignature directories..."
+
           find "$APP" \
             -type d \
             -name "_CodeSignature" \
             -prune \
-            -exec rm -rf {} + 2>/dev/null || true
+            -exec rm -rf {} +
 
+          echo
           echo "Removing provisioning profiles..."
+
           find "$APP" \
             -type f \
             -name "embedded.mobileprovision" \
-            -delete 2>/dev/null || true
+            -delete
 
-      - name: Create IPA
+          echo
+          echo "Final signature check:"
+          codesign -dvvv "$APP" 2>&1 || true
+
+      - name: Create unsigned IPA
         run: |
           set -e
 
@@ -127,37 +231,56 @@ jobs:
             Excalibur-unsigned.ipa \
             Payload
 
-          echo "IPA created:"
+          echo
+          echo "========================================"
+          echo "IPA CREATED"
+          echo "========================================"
+
           ls -lh Excalibur-unsigned.ipa
 
       - name: Verify IPA
         run: |
           set -e
 
-          echo "========== IPA CONTENTS =========="
+          IPA="$RUNNER_TEMP/Excalibur-unsigned.ipa"
 
-          unzip -l "$RUNNER_TEMP/Excalibur-unsigned.ipa"
+          echo "IPA:"
+          ls -lh "$IPA"
 
           echo
-          echo "========== EXTRACTING IPA =========="
+          echo "IPA contents:"
+          unzip -l "$IPA"
 
-          rm -rf "$RUNNER_TEMP/ipa-check"
+          echo
+          echo "Checking Payload..."
 
           unzip -q \
-            "$RUNNER_TEMP/Excalibur-unsigned.ipa" \
+            "$IPA" \
             -d "$RUNNER_TEMP/ipa-check"
 
+          APP=$(find "$RUNNER_TEMP/ipa-check/Payload" \
+            -maxdepth 1 \
+            -type d \
+            -name "*.app" \
+            -print -quit)
+
+          if [ -z "$APP" ]; then
+            echo "::error::IPA does not contain an .app."
+            exit 1
+          fi
+
+          echo "IPA contains:"
+          echo "$APP"
+
           echo
-          echo "========== PAYLOAD =========="
+          echo "Info.plist:"
+          /usr/libexec/PlistBuddy \
+            -c "Print :CFBundleIdentifier" \
+            "$APP/Info.plist" || true
 
-          ls -la "$RUNNER_TEMP/ipa-check/Payload"
-
-          echo
-          echo "========== APP =========="
-
-          find "$RUNNER_TEMP/ipa-check/Payload/kfun.app" \
-            -maxdepth 2 \
-            -print
+          /usr/libexec/PlistBuddy \
+            -c "Print :CFBundleExecutable" \
+            "$APP/Info.plist" || true
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
