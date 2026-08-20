@@ -11,6 +11,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Show Xcode version
         run: |
@@ -22,6 +24,12 @@ jobs:
           xcodebuild \
             -list \
             -project "darksword-kexploit-fun.xcodeproj"
+
+      - name: Build XPF Library
+        run: |
+          cd darksword-kexploit-fun/XPF
+          make ios
+          ls -la output/ios/
 
       - name: Clean
         run: |
