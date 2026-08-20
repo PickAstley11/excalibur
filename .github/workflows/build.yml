@@ -1,57 +1,53 @@
-name: Build IPA
+name: Build bad_query Unsigned IPA
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: xcode-27
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Select Xcode
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: latest-stable
+      - name: Verify Xcode 27
+        run: |
+          xcode-select -p
+          xcodebuild -version
+          xcodebuild -showsdks
 
-      - name: Resolve Swift Packages
+      - name: Show project information
         run: |
           xcodebuild \
-            -resolvePackageDependencies \
-            -project darksword-kexploit-fun.xcodeproj
+            -list \
+            -project "$PWD/bad_query.xcodeproj"
 
-      - name: Build Archive
+      - name: Build unsigned archive
         run: |
           xcodebuild archive \
-            -project darksword-kexploit-fun.xcodeproj \
-            -scheme darksword-kexploit-fun \
+            -project "$PWD/bad_query.xcodeproj" \
+            -scheme "bad_query" \
             -configuration Release \
-            -archivePath build/kfun.xcarchive \
+            -sdk iphoneos \
+            -archivePath "$PWD/build/bad_query.xcarchive" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO
 
-      - name: Export IPA
+      - name: Create unsigned IPA
         run: |
-          cat > ExportOptions.plist <<EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-          "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>method</key>
-              <string>development</string>
-          </dict>
-          </plist>
-          EOF
+          mkdir -p build/Payload
 
-          xcodebuild -exportArchive \
-            -archivePath build/kfun.xcarchive \
-            -exportPath build/export \
-            -exportOptionsPlist ExportOptions.plist \
-            CODE_SIGNING_ALLOWED=NO
+          cp -R \
+            build/bad_query.xcarchive/Products/Applications/*.app \
+            build/Payload/
+
+          cd build
+          zip -r bad_query-unsigned.ipa Payload
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: kfun-ipa
-          path: build/export/*.ipa
+          name: bad_query-unsigned-IPA
+          path: build/bad_query-unsigned.ipa
