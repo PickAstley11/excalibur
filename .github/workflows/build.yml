@@ -1,53 +1,90 @@
-name: Build darksword-kexploit-fun Unsigned IPA
+name: Build Excalibur Unsigned IPA
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: xcode-27
+    name: Build unsigned IPA
+    runs-on: macos-26
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Verify Xcode 27
+      - name: Show Xcode version
         run: |
-          xcode-select -p
           xcodebuild -version
-          xcodebuild -showsdks
+          xcode-select -p
 
-      - name: Show project information
+      - name: List project schemes
         run: |
           xcodebuild \
             -list \
-            -project "$PWD/darksword-kexploit-fun.xcodeproj"
+            -project "darksword-kexploit-fun.xcodeproj"
 
-      - name: Build unsigned archive
+      - name: Clean
+        run: |
+          xcodebuild clean \
+            -project "darksword-kexploit-fun.xcodeproj" \
+            -scheme "darksword-kexploit-fun" \
+            -configuration Release
+
+      - name: Archive unsigned app
         run: |
           xcodebuild archive \
-            -project "$PWD/darksword-kexploit-fun.xcodeproj" \
+            -project "darksword-kexploit-fun.xcodeproj" \
             -scheme "darksword-kexploit-fun" \
             -configuration Release \
             -sdk iphoneos \
-            -archivePath "$PWD/build/darksword-kexploit-fun.xcarchive" \
+            -archivePath "$RUNNER_TEMP/Excalibur.xcarchive" \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO
 
-      - name: Create unsigned IPA
+      - name: Find application
         run: |
-          mkdir -p build/Payload
+          set -e
 
-          cp -R \
-            build/darksword-kexploit-fun.xcarchive/Products/Applications/*.app \
-            build/Payload/
+          ARCHIVE="$RUNNER_TEMP/Excalibur.xcarchive"
+          APP=$(find "$ARCHIVE/Products/Applications" \
+            -maxdepth 1 \
+            -name "*.app" \
+            -type d \
+            -print -quit)
 
-          cd build
-          zip -r darksword-kexploit-fun-unsigned.ipa Payload
+          if [ -z "$APP" ]; then
+            echo "ERROR: No .app was found!"
+            find "$ARCHIVE" -maxdepth 5 -print
+            exit 1
+          fi
 
-      - name: Upload unsigned IPA
+          echo "Found:"
+          echo "$APP"
+
+          mkdir -p "$RUNNER_TEMP/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/Payload/"
+
+      - name: Create IPA
+        run: |
+          set -e
+
+          cd "$RUNNER_TEMP"
+          rm -f Excalibur-unsigned.ipa
+
+          zip -qry Excalibur-unsigned.ipa Payload
+
+          echo "IPA created:"
+          ls -lh Excalibur-unsigned.ipa
+
+      - name: Verify IPA
+        run: |
+          unzip -l "$RUNNER_TEMP/Excalibur-unsigned.ipa"
+
+      - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: darksword-kexploit-fun-unsigned-IPA
-          path: build/darksword-kexploit-fun-unsigned.ipa
+          name: Excalibur-unsigned-IPA
+          path: ${{ runner.temp }}/Excalibur-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 7
